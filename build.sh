@@ -15,10 +15,10 @@ if [ ! -z $CROSS_COMP ]; then
 fi
 make && make install
 cd ..	
-wget https://raw.githubusercontent.com/janda09/myfiles/main/dropbear-DROPBEAR_2019.78.tar.gz
+wget https://raw.githubusercontent.com/janda09/myfiles/main/DROPBEAR_2019.78.tar.gz
 tar xvzf DROPBEAR_2019.78.tar.gz
 patch -p0 < patch.patch
-cd dropbear-DROPBEAR_2019.78
+cd DROPBEAR_2019.78
 autoconf && autoheader
 
 if [ ! -z $CROSS_COMP ]; then
