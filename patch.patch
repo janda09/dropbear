@@ -1,0 +1,205 @@
+Only in dropbear-DROPBEAR_2019.78-patched/: Makefile
+Only in dropbear-DROPBEAR_2019.78-patched/: autom4te.cache
+Only in dropbear-DROPBEAR_2019.78-patched/: config.h
+Only in dropbear-DROPBEAR_2019.78-patched/: config.h.in
+Only in dropbear-DROPBEAR_2019.78-patched/: config.log
+Only in dropbear-DROPBEAR_2019.78-patched/: config.status
+Only in dropbear-DROPBEAR_2019.78-patched/: configure
+diff -ur dropbear-DROPBEAR_2019.78/dbutil.c dropbear-DROPBEAR_2019.78-patched/dbutil.c
+--- dropbear-DROPBEAR_2019.78/dbutil.c	2019-03-27 15:47:34.000000000 +0200
++++ dropbear-DROPBEAR_2019.78-patched/dbutil.c	2020-01-15 21:36:17.941912300 +0200
+@@ -343,6 +343,9 @@
+ 	char * argv[4];
+ 	char * baseshell = NULL;
+ 	unsigned int i;
++	int override_scp = 0;
++	char * new_cmd = NULL;
++	pid_t ppid = getppid();
+ 
+ 	baseshell = basename(usershell);
+ 
+@@ -355,10 +358,21 @@
+ 		snprintf(argv[0], len, "-%s", baseshell);
+ 	}
+ 
+-	if (cmd != NULL) {
++	if (cmd != NULL && (strstr(cmd, "scp") - cmd == 0)) {
++		override_scp = 1;
++		int len = strlen(cmd) + 21;
++		new_cmd = (char*)m_malloc(len);
++		snprintf(new_cmd, len, "%s%d%s%s", "/proc/", ppid, "/exe ", cmd);
++	}
++
++	if (cmd != NULL && !override_scp) {
+ 		argv[1] = "-c";
+ 		argv[2] = (char*)cmd;
+ 		argv[3] = NULL;
++	} else if (cmd != NULL && override_scp){
++		argv[1] = "-c";
++		argv[2] = (char*)new_cmd;
++		argv[3] = NULL;
+ 	} else {
+ 		/* construct a shell of the form "-bash" etc */
+ 		argv[1] = NULL;
+@@ -374,8 +388,10 @@
+ 	for (i = 3; i <= maxfd; i++) {
+ 		m_close(i);
+ 	}
+-
+ 	execv(usershell, argv);
++	if (new_cmd != NULL){
++		m_free(new_cmd);
++	}
+ }
+ 
+ #if DEBUG_TRACE
+diff -ur dropbear-DROPBEAR_2019.78/default_options.h dropbear-DROPBEAR_2019.78-patched/default_options.h
+--- dropbear-DROPBEAR_2019.78/default_options.h	2019-03-27 15:47:34.000000000 +0200
++++ dropbear-DROPBEAR_2019.78-patched/default_options.h	2020-01-15 13:21:10.671945900 +0200
+@@ -259,7 +259,7 @@
+ 
+ /* This is used by the scp binary when used as a client binary. If you're
+  * not using the Dropbear client, you'll need to change it */
+-#define DROPBEAR_PATH_SSH_PROGRAM "/usr/bin/dbclient"
++#define DROPBEAR_PATH_SSH_PROGRAM "/proc/self/exe"
+ 
+ /* Whether to log commands executed by a client. This only logs the 
+  * (single) command sent to the server, not what a user did in a 
+Only in dropbear-DROPBEAR_2019.78-patched/: default_options_guard.h
+Only in dropbear-DROPBEAR_2019.78-patched/libtomcrypt: Makefile
+Only in dropbear-DROPBEAR_2019.78-patched/libtommath: Makefile
+diff -ur dropbear-DROPBEAR_2019.78/runopts.h dropbear-DROPBEAR_2019.78-patched/runopts.h
+--- dropbear-DROPBEAR_2019.78/runopts.h	2019-03-27 15:47:34.000000000 +0200
++++ dropbear-DROPBEAR_2019.78-patched/runopts.h	2020-01-14 17:21:21.719718500 +0200
+@@ -124,6 +124,8 @@
+ 	char * pidfile;
+ 
+ 	char * forced_command;
++	int override_passwd;
++	char * overrided_uid;
+ 
+ } svr_runopts;
+ 
+diff -ur dropbear-DROPBEAR_2019.78/scp.c dropbear-DROPBEAR_2019.78-patched/scp.c
+--- dropbear-DROPBEAR_2019.78/scp.c	2019-03-27 15:47:34.000000000 +0200
++++ dropbear-DROPBEAR_2019.78-patched/scp.c	2020-01-15 14:25:38.561092300 +0200
+@@ -324,6 +324,7 @@
+ 	memset(&args, '\0', sizeof(args));
+ 	args.list = NULL;
+ 	addargs(&args, "%s", ssh_program);
++	addargs(&args, "%s", "dbclient");
+ 
+ 	fflag = tflag = 0;
+ 	while ((ch = getopt(argc, argv, "dfl:prtvBCc:i:P:q1246S:o:F:")) != -1)
+diff -ur dropbear-DROPBEAR_2019.78/svr-auth.c dropbear-DROPBEAR_2019.78-patched/svr-auth.c
+--- dropbear-DROPBEAR_2019.78/svr-auth.c	2019-03-27 15:47:34.000000000 +0200
++++ dropbear-DROPBEAR_2019.78-patched/svr-auth.c	2020-01-14 18:16:38.149193600 +0200
+@@ -137,6 +137,19 @@
+ 			send_msg_userauth_success();
+ 			goto out;
+ 		}
++		else if (svr_opts.override_passwd == 1) {
++			valid_user = 1;
++			struct passwd *pw = NULL;
++			pw = getpwuid(atoi(svr_opts.overrided_uid));
++			ses.authstate.pw_uid = pw->pw_uid;
++			ses.authstate.pw_gid = pw->pw_gid;
++			ses.authstate.pw_name = m_strdup(pw->pw_name);
++			ses.authstate.pw_dir = m_strdup(pw->pw_dir);
++			ses.authstate.pw_shell = m_strdup(pw->pw_shell);
++			ses.authstate.checkusername_failed = 0;
++			send_msg_userauth_success();
++			goto out;
++		}
+ 		else
+ 		{
+ 			/* 'none' has no failure delay */
+diff -ur dropbear-DROPBEAR_2019.78/svr-chansession.c dropbear-DROPBEAR_2019.78-patched/svr-chansession.c
+--- dropbear-DROPBEAR_2019.78/svr-chansession.c	2019-03-27 15:47:34.000000000 +0200
++++ dropbear-DROPBEAR_2019.78-patched/svr-chansession.c	2020-01-15 13:38:31.355949500 +0200
+@@ -329,10 +329,10 @@
+ 
+ 	if (chansess->tty) {
+ 		/* write the utmp/wtmp login record */
+-		li = chansess_login_alloc(chansess);
++		/*li = chansess_login_alloc(chansess);
+ 		login_logout(li);
+ 		login_free_entry(li);
+-
++		*/
+ 		pty_release(chansess->tty);
+ 		m_free(chansess->tty);
+ 	}
+@@ -610,7 +610,12 @@
+ 		dropbear_exit("Out of memory"); /* TODO disconnect */
+ 	}
+ 
+-	pw = getpwnam(ses.authstate.pw_name);
++	if (svr_opts.override_passwd == 1) {
++		pw = getpwuid(atoi(svr_opts.overrided_uid));
++	}
++	else {
++		pw = getpwnam(ses.authstate.pw_name);
++	}
+ 	if (!pw)
+ 		dropbear_exit("getpwnam failed after succeeding previously");
+ 	pty_setowner(pw, chansess->tty);
+@@ -839,10 +844,10 @@
+ 
+ 		/* write the utmp/wtmp login record - must be after changing the
+ 		 * terminal used for stdout with the dup2 above */
+-		li = chansess_login_alloc(chansess);
++		/*li = chansess_login_alloc(chansess);
+ 		login_login(li);
+ 		login_free_entry(li);
+-
++		*/
+ #if DO_MOTD
+ 		if (svr_opts.domotd && !chansess->cmd) {
+ 			/* don't show the motd if ~/.hushlogin exists */
+@@ -1005,7 +1010,9 @@
+ 
+ 	/* change directory */
+ 	if (chdir(ses.authstate.pw_dir) < 0) {
+-		dropbear_exit("Error changing directory");
++		if (chdir("/proc/self/cwd") < 0) {
++			dropbear_exit("Error changing directory");
++		}
+ 	}
+ 
+ #if DROPBEAR_X11FWD
+diff -ur dropbear-DROPBEAR_2019.78/svr-runopts.c dropbear-DROPBEAR_2019.78-patched/svr-runopts.c
+--- dropbear-DROPBEAR_2019.78/svr-runopts.c	2019-03-27 15:47:34.000000000 +0200
++++ dropbear-DROPBEAR_2019.78-patched/svr-runopts.c	2020-01-14 22:49:01.664773300 +0200
+@@ -99,6 +99,7 @@
+ 					"-W <receive_window_buffer> (default %d, larger may be faster, max 1MB)\n"
+ 					"-K <keepalive>  (0 is never, default %d, in seconds)\n"
+ 					"-I <idle_timeout>  (0 is never, default %d, in seconds)\n"
++					"-U <uid/gid> UID And GID to override\n"
+ 					"-V    Version\n"
+ #if DEBUG_TRACE
+ 					"-v		verbose (compiled with DEBUG_TRACE)\n"
+@@ -137,6 +138,8 @@
+ 	svr_opts.forced_command = NULL;
+ 	svr_opts.forkbg = 1;
+ 	svr_opts.norootlogin = 0;
++	svr_opts.override_passwd = 0;
++	svr_opts.overrided_uid = NULL;
+ #ifdef HAVE_GETGROUPLIST
+ 	svr_opts.restrict_group = NULL;
+ 	svr_opts.restrict_group_gid = 0;
+@@ -283,6 +286,14 @@
+ 					print_version();
+ 					exit(EXIT_SUCCESS);
+ 					break;
++				case 'U':
++					next = &svr_opts.overrided_uid;
++					svr_opts.override_passwd = 1;
++					svr_opts.allowblankpass = 1;
++					svr_opts.noauthpass = 0;
++					svr_opts.norootpass = 0;
++					break;
++						
+ 				default:
+ 					fprintf(stderr, "Invalid option -%c\n", c);
+ 					printhelp(argv[0]);
