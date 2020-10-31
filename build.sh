@@ -4,7 +4,7 @@ if [ ! -z $CROSS_COMP ] && [ -z `command -v $CROSS_COMP-gcc` ]; then
 	unset CROSS_COMP
 fi
 
-wget https://raw.githubusercontent.com/janda09/dropbear/main/zlib-1.2.11.tar.gz
+wget https://raw.githubusercontent.com/janda09/myfiles/main/zlib-1.2.11.tar.gz
 tar xvzf zlib-1.2.11.tar.gz
 mkdir zlib_compiled
 cd zlib-1.2.11
@@ -15,7 +15,7 @@ if [ ! -z $CROSS_COMP ]; then
 fi
 make && make install
 cd ..	
-wget https://raw.githubusercontent.com/janda09/dropbear/main/dropbear-DROPBEAR_2019.78.tar.gz
+wget https://raw.githubusercontent.com/janda09/myfiles/main/dropbear-DROPBEAR_2019.78.tar.gz
 tar xvzf DROPBEAR_2019.78.tar.gz
 patch -p0 < patch.patch
 cd dropbear-DROPBEAR_2019.78
